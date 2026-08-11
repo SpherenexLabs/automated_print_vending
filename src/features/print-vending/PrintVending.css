@@ -236,6 +236,25 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.print-options-grid {
+  background: #f9fbff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 16px;
+}
+
+.print-option-wide {
+  grid-column: 1 / -1;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .field {
   display: grid;
   gap: 8px;
@@ -266,6 +285,12 @@ select:focus,
 .tab-switcher button:focus-visible {
   box-shadow: 0 0 0 3px rgba(21, 94, 239, 0.22);
   outline: 0;
+}
+
+input[readonly] {
+  background: #f3f6fa;
+  color: #475467;
+  cursor: default;
 }
 
 .segmented-control {
@@ -596,8 +621,13 @@ tbody tr:hover {
   }
 
   .form-grid,
+  .print-options-grid,
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .print-option-wide {
+    grid-column: auto;
   }
 
   .panel {

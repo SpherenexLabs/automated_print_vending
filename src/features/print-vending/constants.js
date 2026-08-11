@@ -12,6 +12,11 @@ export const DEFAULT_PRINT_OPTIONS = {
   pages: 1,
   printType: "bw",
   paperSize: "A4",
+  destination: "Canon MG2500 series Printer",
+  pageSelection: "all",
+  pageRange: "",
+  pagesPerSheet: 1,
+  scale: "default",
 };
 
 export const PAGE_TABS = {

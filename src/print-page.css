@@ -1,0 +1,45 @@
+* { box-sizing: border-box; }
+
+body {
+  background: #eef3fb;
+  color: #172033;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  margin: 0;
+}
+
+.print-page { margin: 0 auto; max-width: 1100px; padding: 24px; }
+.print-toolbar, .job-settings, .document-viewer, .print-error {
+  background: #fff;
+  border: 1px solid #dce3ee;
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+.print-toolbar { align-items: center; display: flex; gap: 20px; justify-content: space-between; padding: 20px; }
+.print-toolbar h1 { font-size: 24px; margin: 0; overflow-wrap: anywhere; }
+.print-toolbar p { color: #667085; margin: 7px 0 0; }
+.eyebrow { color: #155eef !important; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+#print-button { background: #155eef; border: 0; border-radius: 8px; color: #fff; cursor: pointer; font: inherit; font-weight: 800; padding: 11px 22px; }
+#print-button:disabled { cursor: wait; opacity: .55; }
+.job-settings { display: grid; gap: 1px; grid-template-columns: repeat(4, 1fr); overflow: hidden; }
+.job-settings div { background: #f8faff; display: grid; gap: 5px; padding: 14px; }
+.job-settings span { color: #667085; font-size: 12px; font-weight: 700; }
+.job-settings strong { overflow-wrap: anywhere; }
+.document-viewer { min-height: 70vh; overflow: hidden; padding: 10px; }
+.print-document { border: 0; display: block; height: 75vh; margin: auto; max-width: 100%; width: 100%; }
+img.print-document { height: auto; object-fit: contain; width: auto; }
+body[data-scale="actual"] img.print-document { max-width: none; }
+.print-error { background: #fff0f0; border-color: #f0c4c4; color: #9f2424; font-weight: 700; padding: 18px; }
+
+@media (max-width: 700px) {
+  .print-page { padding: 12px; }
+  .print-toolbar { align-items: stretch; flex-direction: column; }
+  .job-settings { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media print {
+  body { background: #fff; }
+  .print-page { max-width: none; padding: 0; }
+  .print-toolbar, .job-settings, .print-error { display: none !important; }
+  .document-viewer { border: 0; margin: 0; min-height: 0; padding: 0; }
+  .print-document { height: 100vh; max-width: 100%; width: 100%; }
+}

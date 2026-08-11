@@ -52,7 +52,21 @@ export const subscribeToPrintedPages = (callback) => {
   });
 };
 
-export const createPrintJob = async ({ file, copies, pages, printType, paperSize, amount }) => {
+export const createPrintJob = async ({
+  file,
+  copies,
+  pages,
+  printType,
+  paperSize,
+  destination,
+  pageSelection,
+  pageRange,
+  pagesPerSheet,
+  scale,
+  selectedPages,
+  sheets,
+  amount,
+}) => {
   const safeFileName = sanitizeFileName(file.name);
   const uniqueFileName = `${createTransactionId("FILE")}_${safeFileName}`;
   const filePath = `${FILES_PATH}/${uniqueFileName}`;
@@ -62,7 +76,7 @@ export const createPrintJob = async ({ file, copies, pages, printType, paperSize
   const fileURL = await getDownloadURL(fileStorageReference);
 
   const jobReference = push(dbRef(database, JOBS_PATH));
-  const totalPages = Number(pages) * Number(copies);
+  const totalPages = Number(selectedPages) * Number(copies);
 
   const jobData = {
     fileName: file.name,
@@ -74,6 +88,13 @@ export const createPrintJob = async ({ file, copies, pages, printType, paperSize
     totalPages,
     printType,
     paperSize,
+    destination,
+    pageSelection,
+    pageRange: pageSelection === "custom" ? pageRange : "",
+    pagesPerSheet: Number(pagesPerSheet),
+    scale,
+    selectedPages: Number(selectedPages),
+    sheets: Number(sheets),
     amount,
     paymentStatus: PAYMENT_STATUS.pending,
     printStatus: PRINT_STATUS.waiting,

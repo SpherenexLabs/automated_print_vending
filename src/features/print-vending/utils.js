@@ -17,6 +17,29 @@ export const formatShortPrintType = (printType) =>
 export const sanitizeFileName = (fileName) =>
   fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
 
+export const getSelectedPageCount = (pageSelection, pageRange, totalPages) => {
+  const pageCount = Math.max(1, Number(totalPages) || 1);
+  if (pageSelection !== "custom") return pageCount;
+
+  const selectedPages = new Set();
+  String(pageRange)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const match = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+      if (!match) return;
+      const start = Number(match[1]);
+      const end = Number(match[2] || match[1]);
+      if (start < 1 || end < start || start > pageCount) return;
+      for (let page = start; page <= Math.min(end, pageCount); page += 1) {
+        selectedPages.add(page);
+      }
+    });
+
+  return selectedPages.size;
+};
+
 export const getPaymentTone = (status) => {
   if (status === PAYMENT_STATUS.success) return "success";
   if (status === PAYMENT_STATUS.failed) return "danger";

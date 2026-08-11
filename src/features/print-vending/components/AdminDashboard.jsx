@@ -4,14 +4,11 @@ import {
   clearPrintJobs,
   confirmPayment,
   deletePrintJob,
-  savePrintedPageCount,
   updatePrintStatus,
 } from "../services/printVendingService";
 import {
-  escapeHtml,
   formatCurrency,
   formatShortPrintType,
-  getCurrentTimestamp,
   getPaymentTone,
 } from "../utils";
 
@@ -21,72 +18,6 @@ const getPrintTone = (status) => {
   if (status === PRINT_STATUS.ready || status === PRINT_STATUS.printing) return "info";
   return "warning";
 };
-
-function buildPrintWindowHtml(job) {
-  const title = `Print Job ${escapeHtml(job.id)}`;
-  const body = job.fileType?.includes("image")
-    ? `<img src="${escapeHtml(job.fileURL)}" alt="print-file" />`
-    : `<iframe title="print-file" src="${escapeHtml(job.fileURL)}"></iframe>`;
-
-  return `
-    <html>
-      <head>
-        <title>${title}</title>
-        <style>
-          body {
-            color: #111827;
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            text-align: center;
-          }
-
-          iframe {
-            border: 0;
-            height: 90vh;
-            width: 100%;
-          }
-
-          img {
-            height: auto;
-            max-width: 100%;
-          }
-
-          .print-title {
-            font-size: 16px;
-            font-weight: 700;
-            margin-bottom: 14px;
-          }
-
-          @media print {
-            body {
-              padding: 0;
-            }
-
-            .print-title {
-              display: none;
-            }
-
-            iframe {
-              height: 100vh;
-            }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="print-title">
-          ${title}<br />
-          Pages: ${escapeHtml(job.pages)}<br />
-          Copies: ${escapeHtml(job.copies)}
-        </div>
-        ${body}
-        <script>
-          setTimeout(() => window.print(), 1500);
-        </script>
-      </body>
-    </html>
-  `;
-}
 
 export function AdminDashboard({ jobs, metrics, totalPrintedPages, showStatusMessage }) {
   const handleManualPayment = async (job) => {
@@ -106,34 +37,11 @@ export function AdminDashboard({ jobs, metrics, totalPrintedPages, showStatusMes
     }
 
     try {
-      await updatePrintStatus(job.id, PRINT_STATUS.printing);
-
-      const printWindow = window.open("", "_blank");
-
-      if (!printWindow) {
-        showStatusMessage("Popup blocked. Please allow popups for printing.", "danger");
-        return;
-      }
-
-      printWindow.document.write(buildPrintWindowHtml(job));
-      printWindow.document.close();
-
-      const nextCount = Number(totalPrintedPages) + Number(job.totalPages);
-
-      await updatePrintStatus(job.id, PRINT_STATUS.printed, {
-        printedAt: getCurrentTimestamp(),
-      });
-      await savePrintedPageCount(nextCount);
-
-      if (nextCount > 0 && nextCount % 10 === 0) {
-        showStatusMessage(`${nextCount} pages printed. Check paper stock.`, "info");
-      } else {
-        showStatusMessage("Printing started successfully.", "success");
-      }
+      await updatePrintStatus(job.id, PRINT_STATUS.ready, { printError: "" });
+      showStatusMessage("Job sent to the laptop print agent.", "success");
     } catch (error) {
       console.error(error);
-      await updatePrintStatus(job.id, PRINT_STATUS.failed);
-      showStatusMessage("Printing failed.", "danger");
+      showStatusMessage("Failed to send the job to the print agent.", "danger");
     }
   };
 
@@ -220,8 +128,8 @@ export function AdminDashboard({ jobs, metrics, totalPrintedPages, showStatusMes
                   <tr key={job.id}>
                     <td className="mono-cell">{job.id}</td>
                     <td className="file-cell">{job.fileName}</td>
-                    <td>{job.pages} x {job.copies}</td>
-                    <td>{formatShortPrintType(job.printType)} / {job.paperSize}</td>
+                    <td>{job.selectedPages ?? job.pages} x {job.copies}<br /><span className="muted">{job.sheets ?? job.totalPages} sheets</span></td>
+                    <td>{formatShortPrintType(job.printType)} / {job.paperSize}<br /><span className="muted">{job.pagesPerSheet || 1} per sheet</span></td>
                     <td>{formatCurrency(job.amount)}</td>
                     <td>
                       <Badge tone={getPaymentTone(job.paymentStatus)}>
@@ -249,13 +157,15 @@ export function AdminDashboard({ jobs, metrics, totalPrintedPages, showStatusMes
                             Paid
                           </button>
                         )}
-                        {job.paymentStatus === PAYMENT_STATUS.success && job.printStatus !== PRINT_STATUS.printed && (
+                        {job.paymentStatus === PAYMENT_STATUS.success &&
+                          job.printStatus !== PRINT_STATUS.printed &&
+                          job.printStatus !== PRINT_STATUS.printing && (
                           <button
                             className="button button-primary button-small"
                             onClick={() => handleStartPrinting(job)}
                             type="button"
                           >
-                            Print
+                            {job.printStatus === PRINT_STATUS.failed ? "Retry" : "Send"}
                           </button>
                         )}
                         <button

@@ -42,7 +42,7 @@ export default function PrintVending() {
         currentJob?.id === job.id ? { ...currentJob, ...paymentData } : currentJob,
       );
       setPaymentJob(null);
-      showStatusMessage("Payment successful. The job is ready for admin printing.", "success");
+      showStatusMessage("Payment successful. Sent to the printer station.", "success");
     } catch (error) {
       console.error(error);
       showStatusMessage("Payment failed. Please try again.", "danger");

@@ -1,7 +1,13 @@
 import { useMemo, useRef, useState } from "react";
 import { DEFAULT_PRINT_OPTIONS, PRICE_PER_PAGE } from "../constants";
 import { createPrintJob } from "../services/printVendingService";
-import { formatCurrency, formatPrintType, getPaymentTone } from "../utils";
+import { getPdfPageCount } from "../pdf";
+import {
+  formatCurrency,
+  formatPrintType,
+  getPaymentTone,
+  getSelectedPageCount,
+} from "../utils";
 import { Badge } from "./Badge";
 import { NumberField } from "./NumberField";
 import { SegmentedControl } from "./SegmentedControl";
@@ -16,6 +22,9 @@ const PAPER_SIZE_OPTIONS = [
   { value: "A3", label: "A3" },
   { value: "Letter", label: "Letter" },
 ];
+
+const DESTINATION_OPTIONS = ["Canon MG2500 series Printer"];
+const PAGES_PER_SHEET_OPTIONS = [1, 2, 4, 6, 9, 16];
 
 const ACCEPTED_FILE_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 const ACCEPTED_FILE_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"];
@@ -36,13 +45,27 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
   const [pages, setPages] = useState(DEFAULT_PRINT_OPTIONS.pages);
   const [printType, setPrintType] = useState(DEFAULT_PRINT_OPTIONS.printType);
   const [paperSize, setPaperSize] = useState(DEFAULT_PRINT_OPTIONS.paperSize);
+  const [destination, setDestination] = useState(DEFAULT_PRINT_OPTIONS.destination);
+  const [pageSelection, setPageSelection] = useState(DEFAULT_PRINT_OPTIONS.pageSelection);
+  const [pageRange, setPageRange] = useState(DEFAULT_PRINT_OPTIONS.pageRange);
+  const [pagesPerSheet, setPagesPerSheet] = useState(DEFAULT_PRINT_OPTIONS.pagesPerSheet);
+  const [scale, setScale] = useState(DEFAULT_PRINT_OPTIONS.scale);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [analyzingFile, setAnalyzingFile] = useState(false);
   const [uploading, setUploading] = useState(false);
 
+  const selectedPages = useMemo(
+    () => getSelectedPageCount(pageSelection, pageRange, pages),
+    [pageRange, pageSelection, pages],
+  );
+  const sheets = useMemo(
+    () => Math.ceil((selectedPages * Number(copies || 0)) / Number(pagesPerSheet || 1)),
+    [copies, pagesPerSheet, selectedPages],
+  );
   const amount = useMemo(() => {
     const rate = PRICE_PER_PAGE[printType];
-    return Number(pages || 0) * Number(copies || 0) * rate;
-  }, [copies, pages, printType]);
+    return sheets * rate;
+  }, [printType, sheets]);
 
   const resetForm = () => {
     setFile(null);
@@ -53,9 +76,14 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
     setPages(DEFAULT_PRINT_OPTIONS.pages);
     setPrintType(DEFAULT_PRINT_OPTIONS.printType);
     setPaperSize(DEFAULT_PRINT_OPTIONS.paperSize);
+    setDestination(DEFAULT_PRINT_OPTIONS.destination);
+    setPageSelection(DEFAULT_PRINT_OPTIONS.pageSelection);
+    setPageRange(DEFAULT_PRINT_OPTIONS.pageRange);
+    setPagesPerSheet(DEFAULT_PRINT_OPTIONS.pagesPerSheet);
+    setScale(DEFAULT_PRINT_OPTIONS.scale);
   };
 
-  const selectFile = (selectedFile) => {
+  const selectFile = async (selectedFile) => {
     if (!selectedFile) return;
 
     if (!isAcceptedFile(selectedFile)) {
@@ -63,8 +91,27 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
       return;
     }
 
-    setFile(selectedFile);
-    showStatusMessage(`${selectedFile.name} selected.`, "info");
+    try {
+      setAnalyzingFile(true);
+      const isPdf = selectedFile.type === "application/pdf" || selectedFile.name.toLowerCase().endsWith(".pdf");
+      const detectedPages = isPdf ? await getPdfPageCount(selectedFile) : 1;
+
+      setFile(selectedFile);
+      setPages(detectedPages);
+      setPageRange("");
+      setPageSelection("all");
+      showStatusMessage(
+        `${selectedFile.name} selected — ${detectedPages} ${detectedPages === 1 ? "page" : "pages"} detected.`,
+        "info",
+      );
+    } catch (error) {
+      console.error(error);
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      showStatusMessage("This file could not be analyzed. Try another PDF or image.", "danger");
+    } finally {
+      setAnalyzingFile(false);
+    }
   };
 
   const handleDragEnter = (event) => {
@@ -102,6 +149,11 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
       return;
     }
 
+    if (pageSelection === "custom" && selectedPages === 0) {
+      showStatusMessage("Enter a valid page range, for example 1-3, 5.", "danger");
+      return;
+    }
+
     try {
       setUploading(true);
 
@@ -111,6 +163,13 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
         pages,
         printType,
         paperSize,
+        destination,
+        pageSelection,
+        pageRange,
+        pagesPerSheet,
+        scale,
+        selectedPages,
+        sheets,
         amount,
       });
 
@@ -163,8 +222,60 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
           </label>
 
           <div className="form-grid">
-            <NumberField label="Pages" onChange={setPages} value={pages} />
+            <NumberField
+              hint={analyzingFile ? "Analyzing file…" : "Detected automatically from the uploaded file."}
+              label="Document pages"
+              onChange={setPages}
+              readOnly
+              value={pages}
+            />
             <NumberField label="Copies" onChange={setCopies} value={copies} />
+          </div>
+
+          <div className="print-options-grid">
+            <label className="field">
+              <span className="field-label">Destination</span>
+              <select value={destination} onChange={(event) => setDestination(event.target.value)}>
+                {DESTINATION_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </label>
+
+            <label className="field">
+              <span className="field-label">Pages</span>
+              <select value={pageSelection} onChange={(event) => setPageSelection(event.target.value)}>
+                <option value="all">All</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </label>
+
+            {pageSelection === "custom" && (
+              <label className="field print-option-wide">
+                <span className="field-label">Page range</span>
+                <input
+                  aria-describedby="page-range-hint"
+                  onChange={(event) => setPageRange(event.target.value)}
+                  placeholder="e.g. 1-3, 5"
+                  value={pageRange}
+                />
+                <small className="field-hint" id="page-range-hint">Use commas for separate pages or ranges.</small>
+              </label>
+            )}
+
+            <label className="field">
+              <span className="field-label">Pages per sheet</span>
+              <select value={pagesPerSheet} onChange={(event) => setPagesPerSheet(Number(event.target.value))}>
+                {PAGES_PER_SHEET_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+
+            <label className="field">
+              <span className="field-label">Scale</span>
+              <select value={scale} onChange={(event) => setScale(event.target.value)}>
+                <option value="default">Default</option>
+                <option value="fit">Fit to printable area</option>
+                <option value="actual">Actual size</option>
+              </select>
+            </label>
           </div>
 
           <SegmentedControl
@@ -182,12 +293,12 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
           />
 
           <div className="quote-row">
-            <span>Estimated amount</span>
+            <span>{sheets} {sheets === 1 ? "sheet" : "sheets"} of paper · Estimated amount</span>
             <strong>{formatCurrency(amount)}</strong>
           </div>
 
-          <button className="button button-primary full-width" disabled={uploading} type="submit">
-            {uploading ? "Uploading..." : "Upload and continue"}
+          <button className="button button-primary full-width" disabled={uploading || analyzingFile} type="submit">
+            {analyzingFile ? "Analyzing document..." : uploading ? "Uploading..." : "Upload and continue"}
           </button>
         </form>
 
@@ -204,8 +315,14 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
                   <strong>{latestJob.pages} x {latestJob.copies}</strong>
                   <span>Total pages</span>
                   <strong>{latestJob.totalPages}</strong>
+                  <span>Paper sheets</span>
+                  <strong>{latestJob.sheets ?? latestJob.totalPages}</strong>
                   <span>Print</span>
                   <strong>{formatPrintType(latestJob.printType)}, {latestJob.paperSize}</strong>
+                  <span>Layout</span>
+                  <strong>{latestJob.pagesPerSheet || 1} per sheet, {latestJob.scale || "default"}</strong>
+                  <span>Destination</span>
+                  <strong>{latestJob.destination || "Canon MG2500 series Printer"}</strong>
                   <span>Payment</span>
                   <Badge tone={getPaymentTone(latestJob.paymentStatus)}>
                     {latestJob.paymentStatus}
