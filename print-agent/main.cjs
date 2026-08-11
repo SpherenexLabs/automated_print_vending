@@ -1,5 +1,8 @@
 const { app, BrowserWindow } = require("electron");
+const fs = require("node:fs/promises");
 const os = require("node:os");
+const path = require("node:path");
+const { PDFDocument } = require("pdf-lib");
 
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyAr4IYnykpwovqOJWzfBd7abVdAma_Ig3Q",
@@ -28,22 +31,27 @@ const queuedJobs = new Set();
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-function parsePageRanges(job) {
-  if (job.pageSelection !== "custom" || !job.pageRange) return undefined;
+function getSelectedPageIndexes(job, pageCount) {
+  if (job.pageSelection !== "custom" || !job.pageRange) {
+    return Array.from({ length: pageCount }, (_, index) => index);
+  }
 
-  const ranges = String(job.pageRange)
+  const indexes = new Set();
+  String(job.pageRange)
     .split(",")
     .map((part) => part.trim())
-    .map((part) => {
+    .forEach((part) => {
       const match = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
-      if (!match) return null;
+      if (!match) return;
       const from = Number(match[1]) - 1;
       const to = Number(match[2] || match[1]) - 1;
-      return from >= 0 && to >= from ? { from, to } : null;
-    })
-    .filter(Boolean);
+      if (from < 0 || to < from || from >= pageCount) return;
+      for (let index = from; index <= Math.min(to, pageCount - 1); index += 1) {
+        indexes.add(index);
+      }
+    });
 
-  return ranges.length ? ranges : undefined;
+  return [...indexes].sort((a, b) => a - b);
 }
 
 function getScaleFactor(scale) {
@@ -56,6 +64,36 @@ async function findPrinter() {
   return printers.find(
     (printer) => printer.name === DEFAULT_PRINTER || printer.displayName === DEFAULT_PRINTER,
   );
+}
+
+async function prepareLocalDocument(job) {
+  const response = await fetch(job.fileURL);
+  if (!response.ok) throw new Error(`Document download failed (${response.status}).`);
+
+  const sourceBytes = Buffer.from(await response.arrayBuffer());
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "print-vending-"));
+  const isPdf = job.fileType === "application/pdf" || /\.pdf$/i.test(job.fileName || "");
+  const extension = isPdf ? ".pdf" : path.extname(job.fileName || "") || ".img";
+  const documentPath = path.join(temporaryDirectory, `job${extension}`);
+
+  try {
+    if (isPdf && job.pageSelection === "custom") {
+      const sourcePdf = await PDFDocument.load(sourceBytes);
+      const selectedIndexes = getSelectedPageIndexes(job, sourcePdf.getPageCount());
+      if (!selectedIndexes.length) throw new Error("The selected PDF page range is empty.");
+
+      const outputPdf = await PDFDocument.create();
+      const pages = await outputPdf.copyPages(sourcePdf, selectedIndexes);
+      pages.forEach((page) => outputPdf.addPage(page));
+      await fs.writeFile(documentPath, await outputPdf.save());
+    } else {
+      await fs.writeFile(documentPath, sourceBytes);
+    }
+    return { documentPath, temporaryDirectory };
+  } catch (error) {
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function sendToPrinter(job, printerName) {
@@ -72,9 +110,6 @@ function sendToPrinter(job, printerName) {
       scaleFactor: getScaleFactor(job.scale),
       margins: { marginType: job.scale === "actual" ? "none" : "printableArea" },
     };
-    const pageRanges = parsePageRanges(job);
-    if (pageRanges) options.pageRanges = pageRanges;
-
     printWindow.webContents.print(options, (success, failureReason) => {
       if (success) resolve();
       else reject(new Error(failureReason || "Windows rejected the print job."));
@@ -104,13 +139,16 @@ async function markFailed(job, error) {
 async function printJob(job) {
   if (!(await claimJob(job))) return;
 
+  let preparedDocument;
+
   try {
     const printer = await findPrinter();
     if (!printer) throw new Error(`Printer '${DEFAULT_PRINTER}' is not available.`);
 
     console.log(`[print-agent] Printing ${job.id}: ${job.fileName}`);
-    await printWindow.loadURL(job.fileURL);
-    await delay(1500);
+    preparedDocument = await prepareLocalDocument(job);
+    await printWindow.loadFile(preparedDocument.documentPath);
+    await delay(2500);
     await sendToPrinter(job, printer.name);
 
     const rootUpdates = {};
@@ -126,6 +164,10 @@ async function printJob(job) {
   } catch (error) {
     console.error(`[print-agent] Failed ${job.id}:`, error.message);
     await markFailed(job, error);
+  } finally {
+    if (preparedDocument?.temporaryDirectory) {
+      await fs.rm(preparedDocument.temporaryDirectory, { recursive: true, force: true });
+    }
   }
 }
 
