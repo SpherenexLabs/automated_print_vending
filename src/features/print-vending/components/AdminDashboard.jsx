@@ -19,7 +19,7 @@ const getPrintTone = (status) => {
   return "warning";
 };
 
-export function AdminDashboard({ jobs, metrics, totalPrintedPages, showStatusMessage }) {
+export function AdminDashboard({ jobs, metrics, onLogout, totalPrintedPages, showStatusMessage }) {
   const handleManualPayment = async (job) => {
     try {
       await confirmPayment(job, "Admin Manual Confirmation", "ADMIN");
@@ -76,9 +76,14 @@ export function AdminDashboard({ jobs, metrics, totalPrintedPages, showStatusMes
           <p className="eyebrow">Operations</p>
           <h1>Print queue</h1>
         </div>
-        <button className="button button-danger" onClick={handleClearJobs} type="button">
-          Clear queue
-        </button>
+        <div className="admin-heading-actions">
+          <button className="button button-secondary" onClick={onLogout} type="button">
+            Sign out
+          </button>
+          <button className="button button-danger" onClick={handleClearJobs} type="button">
+            Clear queue
+          </button>
+        </div>
       </section>
 
       <section className="metric-grid">
@@ -129,7 +134,7 @@ export function AdminDashboard({ jobs, metrics, totalPrintedPages, showStatusMes
                     <td className="mono-cell">{job.id}</td>
                     <td className="file-cell">{job.fileName}</td>
                     <td>{job.selectedPages ?? job.pages} x {job.copies}<br /><span className="muted">{job.sheets ?? job.totalPages} sheets</span></td>
-                    <td>{formatShortPrintType(job.printType)} / {job.paperSize}<br /><span className="muted">{job.pagesPerSheet || 1} per sheet</span></td>
+                    <td>{formatShortPrintType(job.printType)} / {job.paperSize}<br /><span className="muted">{job.orientation === "landscape" ? "Landscape" : "Portrait"} / {job.pagesPerSheet || 1} per sheet</span></td>
                     <td>{formatCurrency(job.amount)}</td>
                     <td>
                       <Badge tone={getPaymentTone(job.paymentStatus)}>

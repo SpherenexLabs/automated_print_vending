@@ -44,7 +44,8 @@ const addSetting = (label, value) => {
 const applyPrintStyles = (job) => {
   const style = document.createElement("style");
   const margin = job.scale === "actual" ? "0" : "10mm";
-  style.textContent = `@page { size: ${job.paperSize || "A4"}; margin: ${margin}; }`;
+  const orientation = job.orientation === "landscape" ? "landscape" : "portrait";
+  style.textContent = `@page { size: ${job.paperSize || "A4"} ${orientation}; margin: ${margin}; }`;
   document.head.append(style);
   document.body.dataset.scale = job.scale || "default";
 };
@@ -114,6 +115,7 @@ const start = async () => {
     addSetting("Pages", job.pageSelection === "custom" ? job.pageRange : "All");
     addSetting("Colour", job.printType === "color" ? "Colour" : "Black and white");
     addSetting("Paper size", job.paperSize || "A4");
+    addSetting("Orientation", job.orientation === "landscape" ? "Landscape" : "Portrait");
     addSetting("Pages per sheet", String(job.pagesPerSheet || 1));
     addSetting("Scale", job.scale || "default");
     addSetting("Copies", String(job.copies || 1));

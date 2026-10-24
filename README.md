@@ -11,6 +11,20 @@ Install the Canon driver, connect the printer, and start the laptop print agent 
 
 The launcher verifies that the Canon queue is available on a USB port, sets it as the Windows default printer, and starts a background Electron agent. Keep its terminal window open. The mobile/deployed React app writes paid jobs to Firebase; the laptop agent claims each ready job atomically, loads its stored file, applies colour, copies, page range, paper size, pages per sheet, and scaling, and prints silently. It then marks the Firebase job as `Printed` or `Print Failed`.
 
+### Telegram printed-page alert
+
+The print agent sends one Telegram message when the cumulative printed-page count reaches or passes 10. If the counter is reset with the admin dashboard's **Clear queue** action, the milestone alert is re-enabled for the next count.
+
+Create a Telegram bot and obtain its chat ID, then set these variables in the PowerShell window before starting the kiosk:
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN = "your-bot-token"
+$env:TELEGRAM_CHAT_ID = "your-chat-id"
+.\scripts\start-print-kiosk.ps1
+```
+
+Keep the bot token private and configure it only on the laptop running the print agent. The alert is disabled when either variable is missing.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

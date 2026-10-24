@@ -168,6 +168,40 @@
   padding: 22px;
 }
 
+.admin-login-workspace {
+  display: grid;
+  min-height: calc(100vh - 100px);
+  place-items: start center;
+}
+
+.admin-login-panel {
+  display: grid;
+  gap: 24px;
+  margin-top: clamp(24px, 8vh, 90px);
+  max-width: 460px;
+  width: 100%;
+}
+
+.admin-login-panel h1 {
+  color: var(--ink);
+  margin: 0;
+}
+
+.admin-login-panel .muted {
+  margin-bottom: 0;
+}
+
+.admin-login-form {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .job-form {
   display: grid;
   gap: 18px;

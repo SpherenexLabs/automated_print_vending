@@ -3,6 +3,7 @@ import { PAGE_TABS, PAYMENT_STATUS } from "./constants";
 import { confirmPayment } from "./services/printVendingService";
 import { usePrintJobs } from "./hooks/usePrintJobs";
 import { AdminDashboard } from "./components/AdminDashboard";
+import { AdminLogin } from "./components/AdminLogin";
 import { PaymentModal } from "./components/PaymentModal";
 import { StatusBanner } from "./components/StatusBanner";
 import { UserPanel } from "./components/UserPanel";
@@ -10,6 +11,7 @@ import "./PrintVending.css";
 
 export default function PrintVending() {
   const [activePage, setActivePage] = useState(PAGE_TABS.user);
+  const [adminAuthenticated, setAdminAuthenticated] = useState(false);
   const [latestJob, setLatestJob] = useState(null);
   const [status, setStatus] = useState({ message: "", tone: "info" });
   const [paymentJob, setPaymentJob] = useState(null);
@@ -22,6 +24,12 @@ export default function PrintVending() {
   const closePaymentModal = () => {
     setPaymentJob(null);
     showStatusMessage("Payment cancelled. Complete payment to release the job.", "info");
+  };
+
+  const handleAdminLogout = () => {
+    setAdminAuthenticated(false);
+    setActivePage(PAGE_TABS.user);
+    showStatusMessage("Admin signed out.", "info");
   };
 
   const handleSimulatedPayment = async (job) => {
@@ -84,12 +92,18 @@ export default function PrintVending() {
           onOpenPayment={setPaymentJob}
           showStatusMessage={showStatusMessage}
         />
-      ) : (
+      ) : adminAuthenticated ? (
         <AdminDashboard
           jobs={jobs}
           metrics={metrics}
+          onLogout={handleAdminLogout}
           showStatusMessage={showStatusMessage}
           totalPrintedPages={totalPrintedPages}
+        />
+      ) : (
+        <AdminLogin
+          onAuthenticate={() => setAdminAuthenticated(true)}
+          showStatusMessage={showStatusMessage}
         />
       )}
 

@@ -23,6 +23,11 @@ const PAPER_SIZE_OPTIONS = [
   { value: "Letter", label: "Letter" },
 ];
 
+const ORIENTATION_OPTIONS = [
+  { value: "portrait", label: "Portrait" },
+  { value: "landscape", label: "Landscape" },
+];
+
 const DESTINATION_OPTIONS = ["Canon MG2500 series Printer"];
 const PAGES_PER_SHEET_OPTIONS = [1, 2, 4, 6, 9, 16];
 
@@ -45,6 +50,7 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
   const [pages, setPages] = useState(DEFAULT_PRINT_OPTIONS.pages);
   const [printType, setPrintType] = useState(DEFAULT_PRINT_OPTIONS.printType);
   const [paperSize, setPaperSize] = useState(DEFAULT_PRINT_OPTIONS.paperSize);
+  const [orientation, setOrientation] = useState(DEFAULT_PRINT_OPTIONS.orientation);
   const [destination, setDestination] = useState(DEFAULT_PRINT_OPTIONS.destination);
   const [pageSelection, setPageSelection] = useState(DEFAULT_PRINT_OPTIONS.pageSelection);
   const [pageRange, setPageRange] = useState(DEFAULT_PRINT_OPTIONS.pageRange);
@@ -76,6 +82,7 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
     setPages(DEFAULT_PRINT_OPTIONS.pages);
     setPrintType(DEFAULT_PRINT_OPTIONS.printType);
     setPaperSize(DEFAULT_PRINT_OPTIONS.paperSize);
+    setOrientation(DEFAULT_PRINT_OPTIONS.orientation);
     setDestination(DEFAULT_PRINT_OPTIONS.destination);
     setPageSelection(DEFAULT_PRINT_OPTIONS.pageSelection);
     setPageRange(DEFAULT_PRINT_OPTIONS.pageRange);
@@ -163,6 +170,7 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
         pages,
         printType,
         paperSize,
+        orientation,
         destination,
         pageSelection,
         pageRange,
@@ -292,6 +300,13 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
             value={paperSize}
           />
 
+          <SegmentedControl
+            label="Orientation"
+            onChange={setOrientation}
+            options={ORIENTATION_OPTIONS}
+            value={orientation}
+          />
+
           <div className="quote-row">
             <span>{sheets} {sheets === 1 ? "sheet" : "sheets"} of paper · Estimated amount</span>
             <strong>{formatCurrency(amount)}</strong>
@@ -318,7 +333,7 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
                   <span>Paper sheets</span>
                   <strong>{latestJob.sheets ?? latestJob.totalPages}</strong>
                   <span>Print</span>
-                  <strong>{formatPrintType(latestJob.printType)}, {latestJob.paperSize}</strong>
+                  <strong>{formatPrintType(latestJob.printType)}, {latestJob.paperSize}, {latestJob.orientation === "landscape" ? "Landscape" : "Portrait"}</strong>
                   <span>Layout</span>
                   <strong>{latestJob.pagesPerSheet || 1} per sheet, {latestJob.scale || "default"}</strong>
                   <span>Destination</span>

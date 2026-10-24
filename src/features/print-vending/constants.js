@@ -1,5 +1,6 @@
 export const JOBS_PATH = "Print_Vending/jobs";
 export const TOTAL_PRINTED_PAGES_PATH = "Print_Vending/totalPrintedPages";
+export const TOTAL_PRINTED_PAGES_ALERT_PATH = "Print_Vending/alerts/printedPages10";
 export const FILES_PATH = "print-vending-files";
 
 export const PRICE_PER_PAGE = {
@@ -12,6 +13,7 @@ export const DEFAULT_PRINT_OPTIONS = {
   pages: 1,
   printType: "bw",
   paperSize: "A4",
+  orientation: "portrait",
   destination: "Canon MG2500 series Printer",
   pageSelection: "all",
   pageRange: "",
@@ -22,6 +24,11 @@ export const DEFAULT_PRINT_OPTIONS = {
 export const PAGE_TABS = {
   user: "user",
   admin: "admin",
+};
+
+export const ADMIN_CREDENTIALS = {
+  username: "admin",
+  password: "Print@123",
 };
 
 export const PAYMENT_STATUS = {

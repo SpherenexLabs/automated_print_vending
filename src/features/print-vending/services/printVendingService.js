@@ -18,6 +18,7 @@ import {
   JOBS_PATH,
   PAYMENT_STATUS,
   PRINT_STATUS,
+  TOTAL_PRINTED_PAGES_ALERT_PATH,
   TOTAL_PRINTED_PAGES_PATH,
 } from "../constants";
 import {
@@ -58,6 +59,7 @@ export const createPrintJob = async ({
   pages,
   printType,
   paperSize,
+  orientation,
   destination,
   pageSelection,
   pageRange,
@@ -88,6 +90,7 @@ export const createPrintJob = async ({
     totalPages,
     printType,
     paperSize,
+    orientation: orientation === "landscape" ? "landscape" : "portrait",
     destination,
     pageSelection,
     pageRange: pageSelection === "custom" ? pageRange : "",
@@ -148,6 +151,9 @@ export const deletePrintJob = async (job) => {
 };
 
 export const clearPrintJobs = async () => {
-  await remove(dbRef(database, JOBS_PATH));
-  await savePrintedPageCount(0);
+  await update(dbRef(database), {
+    [JOBS_PATH]: null,
+    [TOTAL_PRINTED_PAGES_PATH]: 0,
+    [TOTAL_PRINTED_PAGES_ALERT_PATH]: null,
+  });
 };
