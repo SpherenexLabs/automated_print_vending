@@ -155,8 +155,41 @@ function getSelectedPageIndexes(job, pageCount) {
 }
 
 function getScaleFactor(scale) {
-  if (scale === "fit") return 95;
+  if (scale === "default") return 90;
   return 100;
+}
+
+function isGeneratedImageDocument(job) {
+  const sourceNames = Array.isArray(job.sourceFileNames)
+    ? job.sourceFileNames
+    : Object.values(job.sourceFileNames || {});
+  return sourceNames.length > 0 && sourceNames.every((name) => /\.(png|jpe?g)$/i.test(name));
+}
+
+function getPaperDimensions(job) {
+  const paperDimensions = {
+    A3: [841.89, 1190.55],
+    A4: [595.28, 841.89],
+    Letter: [612, 792],
+  };
+  const [width, height] = paperDimensions[job.paperSize] || paperDimensions.A4;
+  return job.orientation === "landscape" ? [height, width] : [width, height];
+}
+
+async function createImagePdf(sourceBytes, job) {
+  const outputPdf = await PDFDocument.create();
+  const isPng = job.fileType === "image/png" || /\.png$/i.test(job.fileName || "");
+  const image = isPng
+    ? await outputPdf.embedPng(sourceBytes)
+    : await outputPdf.embedJpg(sourceBytes);
+  const page = outputPdf.addPage(getPaperDimensions(job));
+  page.drawImage(image, {
+    x: 0,
+    y: 0,
+    width: page.getWidth(),
+    height: page.getHeight(),
+  });
+  return outputPdf.save();
 }
 
 async function hasPaper() {
@@ -186,7 +219,8 @@ async function prepareLocalDocument(job) {
   const sourceBytes = Buffer.from(await response.arrayBuffer());
   const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "print-vending-"));
   const isPdf = job.fileType === "application/pdf" || /\.pdf$/i.test(job.fileName || "");
-  const extension = isPdf ? ".pdf" : path.extname(job.fileName || "") || ".img";
+  const isImage = job.fileType?.startsWith("image/") || /\.(png|jpe?g)$/i.test(job.fileName || "");
+  const extension = isPdf || isImage ? ".pdf" : path.extname(job.fileName || "") || ".img";
   const documentPath = path.join(temporaryDirectory, `job${extension}`);
 
   try {
@@ -199,18 +233,21 @@ async function prepareLocalDocument(job) {
       const pages = await outputPdf.copyPages(sourcePdf, selectedIndexes);
       pages.forEach((page) => outputPdf.addPage(page));
       await fs.writeFile(documentPath, await outputPdf.save());
+    } else if (isImage) {
+      await fs.writeFile(documentPath, await createImagePdf(sourceBytes, job));
     } else {
       await fs.writeFile(documentPath, sourceBytes);
     }
-    return { documentPath, temporaryDirectory };
+    return { documentPath, temporaryDirectory, isImage };
   } catch (error) {
     await fs.rm(temporaryDirectory, { recursive: true, force: true });
     throw error;
   }
 }
 
-function sendToPrinter(job, printerName) {
+function sendToPrinter(job, printerName, isImage) {
   return new Promise((resolve, reject) => {
+    const generatedImageDocument = isGeneratedImageDocument(job);
     const options = {
       silent: true,
       deviceName: printerName,
@@ -221,8 +258,12 @@ function sendToPrinter(job, printerName) {
       pageSize: ["A3", "A4", "Letter"].includes(job.paperSize) ? job.paperSize : "A4",
       landscape: job.orientation === "landscape",
       pagesPerSheet: Math.max(1, Number(job.pagesPerSheet) || 1),
-      scaleFactor: getScaleFactor(job.scale),
-      margins: { marginType: job.scale === "actual" ? "none" : "printableArea" },
+      scaleFactor: isImage || generatedImageDocument ? 100 : getScaleFactor(job.scale),
+      margins: {
+        marginType: isImage || generatedImageDocument || job.scale === "actual" || job.scale === "fit"
+          ? "none"
+          : "printableArea",
+      },
     };
     printWindow.webContents.print(options, (success, failureReason) => {
       if (success) resolve();
@@ -458,7 +499,7 @@ async function printJob(job) {
     const printer = await findPrinter();
     if (!printer) throw new Error(`Printer '${DEFAULT_PRINTER}' is not available.`);
 
-    console.log(`[print-agent] Printing ${job.id}: ${job.fileName}`);
+    console.log(`[print-agent] Printing queue ${String(job.queueNumber || "---").padStart(3, "0")} (${job.id}): ${job.fileName}`);
     await setPrintSignal(1);
     preparedDocument = await prepareLocalDocument(job);
     await printWindow.loadFile(preparedDocument.documentPath);
@@ -477,7 +518,7 @@ async function printJob(job) {
       console.warn(`[print-agent] Print progress monitoring failed: ${error.message}`);
       return null;
     });
-    await sendToPrinter(job, printer.name);
+    await sendToPrinter(job, printer.name, preparedDocument.isImage);
     await progressPromise;
 
     const rootUpdates = {};
@@ -575,7 +616,14 @@ async function startAgent() {
       .filter(
         (job) => job.paymentStatus === PAYMENT_SUCCESS && job.printStatus === READY_TO_PRINT,
       )
-      .sort((a, b) => Number(a.createdTime || 0) - Number(b.createdTime || 0));
+      .sort((a, b) => {
+        const aQueue = Number(a.queueNumber) || null;
+        const bQueue = Number(b.queueNumber) || null;
+        if (aQueue && bQueue) return aQueue - bQueue;
+        if (aQueue) return 1;
+        if (bQueue) return -1;
+        return Number(a.createdTime || 0) - Number(b.createdTime || 0);
+      });
     jobs.forEach(enqueue);
   }, (error) => console.error("[print-agent] Firebase listener failed:", error));
 }

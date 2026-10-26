@@ -1,10 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_PRINT_OPTIONS, PRICE_PER_PAGE } from "../constants";
 import { createPrintJob } from "../services/printVendingService";
 import { getPdfPageCount } from "../pdf";
+import { createImagePdf } from "../imagePdf";
 import {
   formatCurrency,
   formatPrintType,
+  formatQueueId,
   getPaymentTone,
   getSelectedPageCount,
 } from "../utils";
@@ -33,6 +35,7 @@ const PAGES_PER_SHEET_OPTIONS = [1, 2, 4, 6, 9, 16];
 
 const ACCEPTED_FILE_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 const ACCEPTED_FILE_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"];
+const MAX_IMAGE_FILES = 50;
 
 const isAcceptedFile = (selectedFile) => {
   const fileName = selectedFile.name.toLowerCase();
@@ -43,8 +46,111 @@ const isAcceptedFile = (selectedFile) => {
   );
 };
 
+const isPdfFile = (selectedFile) =>
+  selectedFile.type === "application/pdf" || selectedFile.name.toLowerCase().endsWith(".pdf");
+
+const isImageFile = (selectedFile) => !isPdfFile(selectedFile) && isAcceptedFile(selectedFile);
+
+const filePreviewUrls = new Map();
+
+const getFilePreviewUrl = (file) => {
+  if (!filePreviewUrls.has(file)) {
+    filePreviewUrls.set(file, URL.createObjectURL(file));
+  }
+  return filePreviewUrls.get(file);
+};
+
+const revokeFilePreviewUrl = (file) => {
+  const url = filePreviewUrls.get(file);
+  if (!url) return;
+  URL.revokeObjectURL(url);
+  filePreviewUrls.delete(file);
+};
+
+function SelectedFileItem({ file, index, onPreview, onRemove }) {
+  const thumbnailUrl = isImageFile(file) ? getFilePreviewUrl(file) : "";
+
+  return (
+    <li>
+      <div className="selected-file-summary">
+        {thumbnailUrl ? (
+          <img alt="" className="selected-file-thumbnail" src={thumbnailUrl} />
+        ) : (
+          <span className="selected-file-thumbnail pdf-thumbnail">PDF</span>
+        )}
+        <span className="selected-file-name" title={file.name}>{file.name}</span>
+      </div>
+      <div className="selected-file-actions">
+        <button className="preview-file-button" onClick={() => onPreview(file)} type="button">
+          Preview
+        </button>
+        <button
+          aria-label={`Remove ${file.name}`}
+          className="remove-file-button"
+          onClick={() => onRemove(index)}
+          type="button"
+        >
+          Remove
+        </button>
+      </div>
+    </li>
+  );
+}
+
+const GRID_COLUMNS = {
+  1: 1,
+  2: 2,
+  4: 2,
+  6: 3,
+  9: 3,
+  16: 4,
+};
+
+const PAPER_RATIOS = {
+  A3: [297, 420],
+  A4: [210, 297],
+  Letter: [216, 279],
+};
+
+function PrintLayoutPreview({ files, orientation, pagesPerSheet, paperSize, scale }) {
+  const imageUrls = files.map((file) => ({ file, url: getFilePreviewUrl(file) }));
+  const capacity = Number(pagesPerSheet) || 1;
+  const sheets = Array.from(
+    { length: Math.ceil(imageUrls.length / capacity) },
+    (_, index) => imageUrls.slice(index * capacity, (index + 1) * capacity),
+  );
+  const [paperWidth, paperHeight] = PAPER_RATIOS[paperSize] || PAPER_RATIOS.A4;
+  const ratio = orientation === "landscape"
+    ? `${paperHeight} / ${paperWidth}`
+    : `${paperWidth} / ${paperHeight}`;
+
+  return (
+    <div className="layout-preview-sheets">
+      {sheets.map((sheet, sheetIndex) => (
+        <section className="layout-preview-sheet-wrap" key={`sheet-${sheetIndex}`}>
+          <span>Sheet {sheetIndex + 1} of {sheets.length}</span>
+          <div
+            className={`layout-preview-sheet scale-${scale}`}
+            style={{
+              aspectRatio: ratio,
+              gridTemplateColumns: `repeat(${GRID_COLUMNS[capacity] || 1}, minmax(0, 1fr))`,
+            }}
+          >
+            {sheet.map(({ file, url }, imageIndex) => (
+              <figure key={`${file.name}-${file.lastModified}-${imageIndex}`}>
+                <img src={url} alt={file.name} />
+                <figcaption>{file.name}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMessage }) {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const fileInputRef = useRef(null);
   const [copies, setCopies] = useState(DEFAULT_PRINT_OPTIONS.copies);
   const [pages, setPages] = useState(DEFAULT_PRINT_OPTIONS.pages);
@@ -59,6 +165,21 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [layoutPreviewOpen, setLayoutPreviewOpen] = useState(false);
+  const previewUrl = previewFile ? getFilePreviewUrl(previewFile) : "";
+
+  useEffect(() => {
+    if (!previewFile && !layoutPreviewOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setPreviewFile(null);
+        setLayoutPreviewOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [layoutPreviewOpen, previewFile]);
 
   const selectedPages = useMemo(
     () => getSelectedPageCount(pageSelection, pageRange, pages),
@@ -74,7 +195,10 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
   }, [printType, sheets]);
 
   const resetForm = () => {
-    setFile(null);
+    files.forEach(revokeFilePreviewUrl);
+    setFiles([]);
+    setPreviewFile(null);
+    setLayoutPreviewOpen(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -90,35 +214,60 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
     setScale(DEFAULT_PRINT_OPTIONS.scale);
   };
 
-  const selectFile = async (selectedFile) => {
-    if (!selectedFile) return;
+  const selectFiles = async (selectedFiles) => {
+    const nextFiles = Array.from(selectedFiles || []);
+    if (!nextFiles.length) return;
 
-    if (!isAcceptedFile(selectedFile)) {
+    if (nextFiles.some((selectedFile) => !isAcceptedFile(selectedFile))) {
       showStatusMessage("Please upload a PDF, JPG, JPEG, or PNG file.", "danger");
+      return;
+    }
+
+    const pdfFiles = nextFiles.filter(isPdfFile);
+    if (pdfFiles.length && nextFiles.length > 1) {
+      showStatusMessage("Upload one PDF, or select multiple JPG/PNG images without mixing file types.", "danger");
+      return;
+    }
+
+    if (!pdfFiles.length && nextFiles.length > MAX_IMAGE_FILES) {
+      showStatusMessage(`You can upload up to ${MAX_IMAGE_FILES} images in one print job.`, "danger");
       return;
     }
 
     try {
       setAnalyzingFile(true);
-      const isPdf = selectedFile.type === "application/pdf" || selectedFile.name.toLowerCase().endsWith(".pdf");
-      const detectedPages = isPdf ? await getPdfPageCount(selectedFile) : 1;
+      const detectedPages = pdfFiles.length ? await getPdfPageCount(pdfFiles[0]) : nextFiles.length;
 
-      setFile(selectedFile);
+      files.forEach(revokeFilePreviewUrl);
+      setFiles(nextFiles);
       setPages(detectedPages);
       setPageRange("");
       setPageSelection("all");
       showStatusMessage(
-        `${selectedFile.name} selected — ${detectedPages} ${detectedPages === 1 ? "page" : "pages"} detected.`,
+        pdfFiles.length
+          ? `${pdfFiles[0].name} selected — ${detectedPages} ${detectedPages === 1 ? "page" : "pages"} detected.`
+          : `${nextFiles.length} ${nextFiles.length === 1 ? "image" : "images"} selected — choose how many images to place on each sheet.`,
         "info",
       );
     } catch (error) {
       console.error(error);
-      setFile(null);
+      setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
       showStatusMessage("This file could not be analyzed. Try another PDF or image.", "danger");
     } finally {
       setAnalyzingFile(false);
     }
+  };
+
+  const removeFile = (indexToRemove) => {
+    if (files[indexToRemove] === previewFile) setPreviewFile(null);
+    revokeFilePreviewUrl(files[indexToRemove]);
+    const nextFiles = files.filter((_, index) => index !== indexToRemove);
+    setFiles(nextFiles);
+    setPages(nextFiles.length || DEFAULT_PRINT_OPTIONS.pages);
+    setPageRange("");
+    setPageSelection("all");
+    if (!nextFiles.length && fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleDragEnter = (event) => {
@@ -140,13 +289,13 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
   const handleDrop = (event) => {
     event.preventDefault();
     setIsDraggingFile(false);
-    selectFile(event.dataTransfer.files[0]);
+    selectFiles(event.dataTransfer.files);
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (!file) {
+    if (!files.length) {
       showStatusMessage("Please upload a PDF or image file.", "danger");
       return;
     }
@@ -164,8 +313,12 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
     try {
       setUploading(true);
 
+      const uploadFile = files.every(isImageFile)
+        ? await createImagePdf(files, { paperSize, orientation, scale })
+        : files[0];
       const createdJob = await createPrintJob({
-        file,
+        file: uploadFile,
+        sourceFileNames: files.map((selectedFile) => selectedFile.name),
         copies,
         pages,
         printType,
@@ -183,7 +336,10 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
 
       onJobCreated(createdJob);
       resetForm();
-      showStatusMessage("File uploaded. Complete payment to release the job.", "success");
+      showStatusMessage(
+        `Queue ID ${formatQueueId(createdJob.queueNumber)} created. Complete payment to release the job.`,
+        "success",
+      );
     } catch (error) {
       console.error(error);
       showStatusMessage("Upload failed. Please check Firebase configuration and rules.", "danger");
@@ -217,22 +373,54 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
             <span className="file-icon">PDF</span>
             <span>
               <strong>
-                {isDraggingFile ? "Drop file here" : file ? file.name : "Choose or drag file"}
+                {isDraggingFile
+                  ? "Drop files here"
+                  : files.length
+                    ? `${files.length} ${files.length === 1 ? "file" : "files"} selected`
+                    : "Select multiple images"}
               </strong>
-              <small>PDF, JPG, JPEG, or PNG</small>
+              <small>Choose up to {MAX_IMAGE_FILES} JPG/PNG images, or one PDF</small>
             </span>
             <input
               accept=".pdf,.jpg,.jpeg,.png"
-              onChange={(event) => selectFile(event.target.files[0] || null)}
+              multiple
+              onChange={(event) => selectFiles(event.target.files)}
               ref={fileInputRef}
               type="file"
             />
           </label>
 
+          {files.length > 0 && (
+            <div className="selected-files" aria-label="Selected files">
+              <div className="selected-files-heading">
+                <strong>{files.length === 1 ? "Selected file" : "Selected images"}</strong>
+                {files.every(isImageFile) && (
+                  <div className="selected-files-heading-actions">
+                    {files.length > 1 && <span>One image page each</span>}
+                    <button onClick={() => setLayoutPreviewOpen(true)} type="button">
+                      Preview print layout
+                    </button>
+                  </div>
+                )}
+              </div>
+              <ol>
+                {files.map((selectedFile, index) => (
+                  <SelectedFileItem
+                    file={selectedFile}
+                    index={index}
+                    key={`${selectedFile.name}-${selectedFile.lastModified}-${index}`}
+                    onPreview={setPreviewFile}
+                    onRemove={removeFile}
+                  />
+                ))}
+              </ol>
+            </div>
+          )}
+
           <div className="form-grid">
             <NumberField
-              hint={analyzingFile ? "Analyzing file…" : "Detected automatically from the uploaded file."}
-              label="Document pages"
+              hint={analyzingFile ? "Analyzing files…" : "Each selected image counts as one page."}
+              label="Image/document pages"
               onChange={setPages}
               readOnly
               value={pages}
@@ -270,7 +458,7 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
             )}
 
             <label className="field">
-              <span className="field-label">Pages per sheet</span>
+              <span className="field-label">Images/pages per sheet</span>
               <select value={pagesPerSheet} onChange={(event) => setPagesPerSheet(Number(event.target.value))}>
                 {PAGES_PER_SHEET_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
@@ -322,10 +510,14 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
             <p className="eyebrow">Latest job</p>
             {latestJob ? (
               <>
-                <h2>{latestJob.fileName}</h2>
+                <h2>
+                  {latestJob.sourceFileCount > 1
+                    ? `${latestJob.sourceFileCount} images`
+                    : latestJob.sourceFileNames?.[0] || latestJob.fileName}
+                </h2>
                 <div className="details-list">
-                  <span>Job ID</span>
-                  <strong>{latestJob.id}</strong>
+                  <span>Queue ID</span>
+                  <strong className="queue-id">{formatQueueId(latestJob.queueNumber)}</strong>
                   <span>Pages</span>
                   <strong>{latestJob.pages} x {latestJob.copies}</strong>
                   <span>Total pages</span>
@@ -380,6 +572,77 @@ export function UserPanel({ latestJob, onJobCreated, onOpenPayment, showStatusMe
           )}
         </aside>
       </section>
+
+      {previewFile && (
+        <div
+          aria-label={`Preview of ${previewFile.name}`}
+          aria-modal="true"
+          className="modal-backdrop file-preview-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewFile(null);
+          }}
+          role="dialog"
+        >
+          <div className="file-preview-card">
+            <header>
+              <div>
+                <p className="eyebrow">File preview</p>
+                <h2>{previewFile.name}</h2>
+              </div>
+              <button
+                aria-label="Close preview"
+                className="preview-close-button"
+                onClick={() => setPreviewFile(null)}
+                type="button"
+              >
+                ×
+              </button>
+            </header>
+            {isPdfFile(previewFile) ? (
+              <iframe className="file-preview-frame" src={previewUrl} title={previewFile.name} />
+            ) : (
+              <img className="file-preview-image" src={previewUrl} alt={previewFile.name} />
+            )}
+          </div>
+        </div>
+      )}
+
+      {layoutPreviewOpen && files.length > 0 && files.every(isImageFile) && (
+        <div
+          aria-label="Print layout preview"
+          aria-modal="true"
+          className="modal-backdrop file-preview-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setLayoutPreviewOpen(false);
+          }}
+          role="dialog"
+        >
+          <div className="file-preview-card layout-preview-card">
+            <header>
+              <div>
+                <p className="eyebrow">Print layout preview</p>
+                <h2>{files.length} images · {pagesPerSheet} per sheet</h2>
+                <small>{paperSize}, {orientation}, {scale} scale</small>
+              </div>
+              <button
+                aria-label="Close layout preview"
+                className="preview-close-button"
+                onClick={() => setLayoutPreviewOpen(false)}
+                type="button"
+              >
+                ×
+              </button>
+            </header>
+            <PrintLayoutPreview
+              files={files}
+              orientation={orientation}
+              pagesPerSheet={pagesPerSheet}
+              paperSize={paperSize}
+              scale={scale}
+            />
+          </div>
+        </div>
+      )}
     </main>
   );
 }

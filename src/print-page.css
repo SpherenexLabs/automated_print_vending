@@ -26,7 +26,7 @@ body {
 .job-settings strong { overflow-wrap: anywhere; }
 .document-viewer { min-height: 70vh; overflow: hidden; padding: 10px; }
 .print-document { border: 0; display: block; height: 75vh; margin: auto; max-width: 100%; width: 100%; }
-img.print-document { height: auto; object-fit: contain; width: auto; }
+img.print-document { height: 70vh; object-fit: contain; width: 100%; }
 body[data-scale="actual"] img.print-document { max-width: none; }
 .print-error { background: #fff0f0; border-color: #f0c4c4; color: #9f2424; font-weight: 700; padding: 18px; }
 
@@ -40,6 +40,7 @@ body[data-scale="actual"] img.print-document { max-width: none; }
   body { background: #fff; }
   .print-page { max-width: none; padding: 0; }
   .print-toolbar, .job-settings, .print-error { display: none !important; }
-  .document-viewer { border: 0; margin: 0; min-height: 0; padding: 0; }
+  .document-viewer { border: 0; height: 100vh; margin: 0; min-height: 0; overflow: visible; padding: 0; }
   .print-document { height: 100vh; max-width: 100%; width: 100%; }
+  img.print-document { height: 100%; max-width: none; object-fit: fill; width: 100%; }
 }

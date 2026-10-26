@@ -8,6 +8,11 @@ export const getCurrentTimeMs = () => Date.now();
 
 export const formatCurrency = (amount) => `Rs. ${Number(amount || 0).toLocaleString("en-IN")}`;
 
+export const formatQueueId = (queueNumber) => {
+  const value = Number(queueNumber);
+  return Number.isInteger(value) && value > 0 ? String(value).padStart(3, "0") : "---";
+};
+
 export const formatPrintType = (printType) =>
   printType === "color" ? "Color" : "Black and white";
 

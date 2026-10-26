@@ -1,4 +1,4 @@
-import { formatCurrency } from "../utils";
+import { formatCurrency, formatQueueId } from "../utils";
 
 export function PaymentModal({ job, onCancel, onConfirm }) {
   if (!job) return null;
@@ -9,7 +9,7 @@ export function PaymentModal({ job, onCancel, onConfirm }) {
         <div>
           <p className="eyebrow">Payment confirmation</p>
           <h2>{formatCurrency(job.amount)}</h2>
-          <p className="muted">Job ID: {job.id}</p>
+          <p className="muted">Queue ID: {formatQueueId(job.queueNumber)}</p>
         </div>
 
         <div className="modal-actions">

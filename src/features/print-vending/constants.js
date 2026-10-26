@@ -1,4 +1,5 @@
 export const JOBS_PATH = "Print_Vending/jobs";
+export const QUEUE_COUNTER_PATH = "Print_Vending/lastQueueNumber";
 export const TOTAL_PRINTED_PAGES_PATH = "Print_Vending/totalPrintedPages";
 export const TOTAL_PRINTED_PAGES_ALERT_PATH = "Print_Vending/alerts/printedPages10";
 export const FILES_PATH = "print-vending-files";

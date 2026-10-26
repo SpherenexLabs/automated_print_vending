@@ -10,12 +10,14 @@ import {
   push,
   ref as dbRef,
   remove,
+  runTransaction,
   set,
   update,
 } from "firebase/database";
 import {
   FILES_PATH,
   JOBS_PATH,
+  QUEUE_COUNTER_PATH,
   PAYMENT_STATUS,
   PRINT_STATUS,
   TOTAL_PRINTED_PAGES_ALERT_PATH,
@@ -39,7 +41,14 @@ export const subscribeToJobs = (callback) => {
 
     const jobs = Object.entries(snapshot.val())
       .map(([id, value]) => ({ id, ...value }))
-      .sort((a, b) => Number(b.createdTime || 0) - Number(a.createdTime || 0));
+      .sort((a, b) => {
+        const aQueue = Number(a.queueNumber) || null;
+        const bQueue = Number(b.queueNumber) || null;
+        if (aQueue && bQueue) return aQueue - bQueue;
+        if (aQueue) return 1;
+        if (bQueue) return -1;
+        return Number(a.createdTime || 0) - Number(b.createdTime || 0);
+      });
 
     callback(jobs);
   });
@@ -55,6 +64,7 @@ export const subscribeToPrintedPages = (callback) => {
 
 export const createPrintJob = async ({
   file,
+  sourceFileNames = [],
   copies,
   pages,
   printType,
@@ -77,14 +87,27 @@ export const createPrintJob = async ({
   await uploadBytes(fileStorageReference, file);
   const fileURL = await getDownloadURL(fileStorageReference);
 
+  const queueResult = await runTransaction(
+    dbRef(database, QUEUE_COUNTER_PATH),
+    (currentValue) => (Number(currentValue) || 0) + 1,
+    { applyLocally: false },
+  );
+  if (!queueResult.committed) {
+    throw new Error("Could not reserve a queue number.");
+  }
+  const queueNumber = Number(queueResult.snapshot.val());
+
   const jobReference = push(dbRef(database, JOBS_PATH));
   const totalPages = Number(selectedPages) * Number(copies);
 
   const jobData = {
     fileName: file.name,
+    sourceFileNames,
+    sourceFileCount: sourceFileNames.length || 1,
     fileURL,
     filePath,
     fileType: file.type,
+    queueNumber,
     copies: Number(copies),
     pages: Number(pages),
     totalPages,
@@ -153,6 +176,7 @@ export const deletePrintJob = async (job) => {
 export const clearPrintJobs = async () => {
   await update(dbRef(database), {
     [JOBS_PATH]: null,
+    [QUEUE_COUNTER_PATH]: null,
     [TOTAL_PRINTED_PAGES_PATH]: 0,
     [TOTAL_PRINTED_PAGES_ALERT_PATH]: null,
   });

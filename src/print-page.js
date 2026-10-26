@@ -11,6 +11,11 @@ const printButton = document.querySelector("#print-button");
 let printStarted = false;
 let automaticPrintTimer = null;
 
+const formatQueueId = (queueNumber) => {
+  const value = Number(queueNumber);
+  return Number.isInteger(value) && value > 0 ? String(value).padStart(3, "0") : "---";
+};
+
 const triggerPrint = () => {
   if (printStarted) return;
 
@@ -43,7 +48,8 @@ const addSetting = (label, value) => {
 
 const applyPrintStyles = (job) => {
   const style = document.createElement("style");
-  const margin = job.scale === "actual" ? "0" : "10mm";
+  const isImage = job.fileType?.startsWith("image/") || /\.(png|jpe?g)$/i.test(job.fileName || "");
+  const margin = isImage || job.scale === "actual" ? "0" : "10mm";
   const orientation = job.orientation === "landscape" ? "landscape" : "portrait";
   style.textContent = `@page { size: ${job.paperSize || "A4"} ${orientation}; margin: ${margin}; }`;
   document.head.append(style);
@@ -79,7 +85,14 @@ const fetchPrintJob = async (requestedJobId) => {
 
   const jobs = Object.entries(jobsSnapshot.val())
     .map(([id, value]) => ({ id, ...value }))
-    .sort((a, b) => Number(b.createdTime || 0) - Number(a.createdTime || 0));
+    .sort((a, b) => {
+      const aQueue = Number(a.queueNumber) || null;
+      const bQueue = Number(b.queueNumber) || null;
+      if (aQueue && bQueue) return aQueue - bQueue;
+      if (aQueue) return 1;
+      if (bQueue) return -1;
+      return Number(a.createdTime || 0) - Number(b.createdTime || 0);
+    });
 
   return jobs.find((job) => job.paymentStatus === PAYMENT_STATUS.success) || null;
 };
@@ -112,6 +125,7 @@ const start = async () => {
     title.textContent = job.fileName || `Print job ${job.id}`;
     status.textContent = "Saved Firebase settings loaded. Preparing the system print dialog…";
     addSetting("Destination", job.destination || "Canon MG2500 series Printer");
+    addSetting("Queue ID", formatQueueId(job.queueNumber));
     addSetting("Pages", job.pageSelection === "custom" ? job.pageRange : "All");
     addSetting("Colour", job.printType === "color" ? "Colour" : "Black and white");
     addSetting("Paper size", job.paperSize || "A4");

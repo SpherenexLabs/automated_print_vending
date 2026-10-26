@@ -8,6 +8,7 @@ import {
 } from "../services/printVendingService";
 import {
   formatCurrency,
+  formatQueueId,
   formatShortPrintType,
   getPaymentTone,
 } from "../utils";
@@ -116,7 +117,7 @@ export function AdminDashboard({ jobs, metrics, onLogout, totalPrintedPages, sho
             <table>
               <thead>
                 <tr>
-                  <th>Job</th>
+                  <th>Queue ID</th>
                   <th>File</th>
                   <th>Pages</th>
                   <th>Type</th>
@@ -131,8 +132,10 @@ export function AdminDashboard({ jobs, metrics, onLogout, totalPrintedPages, sho
               <tbody>
                 {jobs.map((job) => (
                   <tr key={job.id}>
-                    <td className="mono-cell">{job.id}</td>
-                    <td className="file-cell">{job.fileName}</td>
+                    <td className="mono-cell queue-id">{formatQueueId(job.queueNumber)}</td>
+                    <td className="file-cell">
+                      {job.sourceFileCount > 1 ? `${job.sourceFileCount} images` : job.fileName}
+                    </td>
                     <td>{job.selectedPages ?? job.pages} x {job.copies}<br /><span className="muted">{job.sheets ?? job.totalPages} sheets</span></td>
                     <td>{formatShortPrintType(job.printType)} / {job.paperSize}<br /><span className="muted">{job.orientation === "landscape" ? "Landscape" : "Portrait"} / {job.pagesPerSheet || 1} per sheet</span></td>
                     <td>{formatCurrency(job.amount)}</td>
