@@ -34,12 +34,41 @@ const PRINT_FAILED = "Print Failed";
 const DEFAULT_PRINTER = process.env.PRINT_VENDING_PRINTER || "Canon MG2500 series Printer";
 const PRINTED_PAGES_ALERT_THRESHOLD = 10;
 const PRINTED_PAGES_ALERT_CLAIM_MS = 60 * 1000;
+const PRINTER_HEALTH_POLL_MS = 3000;
+
+const PRINTER_OBSTACLE_STATES = new Set([
+  "blocked",
+  "deleted",
+  "deleting",
+  "door_open",
+  "error",
+  "manual_feed",
+  "monitor_error",
+  "monitor_timeout",
+  "no_toner",
+  "not_available",
+  "offline",
+  "out_of_memory",
+  "output_bin_full",
+  "page_punt",
+  "paper_jam",
+  "paper_out",
+  "paper_problem",
+  "paused",
+  "pending_deletion",
+  "server_unknown",
+  "toner_low",
+  "user_intervention",
+]);
 
 let databaseApi;
 let database;
 let printWindow;
 let queue = Promise.resolve();
 let lastPaperState;
+let lastPrinterObstacleState = false;
+let lastObstacleState;
+let lastPrinterHealthStatus;
 const queuedJobs = new Set();
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -272,13 +301,18 @@ function sendToPrinter(job, printerName, isImage) {
   });
 }
 
-async function getWindowsPrintJobs(printerName) {
+async function getWindowsPrinterSnapshot(printerName) {
   const command = [
+    "$printer = Get-Printer -Name $env:PRINT_VENDING_QUERY_PRINTER -ErrorAction Stop",
     "$jobs = @(Get-PrintJob -PrinterName $env:PRINT_VENDING_QUERY_PRINTER -ErrorAction Stop |",
     "  Select-Object @{Name='JobId'; Expression={$_.ID}}, TotalPages, PagesPrinted,",
     "    @{Name='JobStatus'; Expression={[string]$_.JobStatus}},",
     "    @{Name='StatusMask'; Expression={[uint32]$_.JobStatus}})",
-    "ConvertTo-Json -InputObject $jobs -Compress",
+    "$snapshot = [PSCustomObject]@{",
+    "  PrinterStatus = [string]$printer.PrinterStatus",
+    "  Jobs = $jobs",
+    "}",
+    "ConvertTo-Json -InputObject $snapshot -Depth 4 -Compress",
   ].join("\n");
 
   const { stdout } = await execFileAsync(
@@ -292,9 +326,33 @@ async function getWindowsPrintJobs(printerName) {
     },
   );
   const output = stdout.trim();
-  if (!output) return [];
-  const jobs = JSON.parse(output);
-  return Array.isArray(jobs) ? jobs : [jobs];
+  if (!output) throw new Error("Windows returned an empty printer status response.");
+  const snapshot = JSON.parse(output);
+  const jobs = Array.isArray(snapshot.Jobs)
+    ? snapshot.Jobs
+    : snapshot.Jobs
+      ? [snapshot.Jobs]
+      : [];
+  return { printerStatus: snapshot.PrinterStatus, jobs };
+}
+
+function normalizePrinterState(value) {
+  return String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function isPrinterObstacleState(value) {
+  const normalized = normalizePrinterState(value);
+  return [...PRINTER_OBSTACLE_STATES].some(
+    (state) => normalized === state ||
+      normalized.startsWith(`${state}_`) ||
+      normalized.endsWith(`_${state}`) ||
+      normalized.includes(`_${state}_`),
+  );
 }
 
 function getSpoolerState(printJob) {
@@ -307,14 +365,66 @@ function getSpoolerState(printJob) {
   if (statusMask & 8) return "spooling";
   if (statusMask & 16) return "printing";
   if (statusMask & 128) return "printed";
-  return String(printJob?.JobStatus || "printing").trim().toLowerCase() || "printing";
+  return normalizePrinterState(printJob?.JobStatus) || "printing";
+}
+
+function getPrinterObstacleStatus(snapshot) {
+  const printerState = normalizePrinterState(snapshot?.printerStatus);
+  if (isPrinterObstacleState(printerState)) return printerState;
+
+  for (const printJob of snapshot?.jobs || []) {
+    const jobState = getSpoolerState(printJob);
+    if (isPrinterObstacleState(jobState)) return jobState;
+  }
+  return "";
+}
+
+async function syncObstacleState() {
+  const obstacle = lastPrinterObstacleState ? 1 : 0;
+  if (lastObstacleState === obstacle) return;
+  await withRetry(
+    () => databaseApi.set(databaseApi.ref(database, OBSTACLE_PATH), obstacle),
+    `setting Obstacle to ${obstacle}`,
+  );
+  lastObstacleState = obstacle;
+}
+
+async function monitorPrinterHealth(printerName) {
+  while (true) {
+    try {
+      const snapshot = await getWindowsPrinterSnapshot(printerName);
+      const obstacleStatus = getPrinterObstacleStatus(snapshot);
+      const healthStatus = obstacleStatus || normalizePrinterState(snapshot.printerStatus) || "unknown";
+      lastPrinterObstacleState = Boolean(obstacleStatus);
+      await syncObstacleState();
+
+      if (healthStatus !== lastPrinterHealthStatus) {
+        console.log(`[print-agent] Printer health: ${healthStatus}; Obstacle=${lastPrinterObstacleState ? 1 : 0}`);
+        lastPrinterHealthStatus = healthStatus;
+      }
+    } catch (error) {
+      lastPrinterObstacleState = true;
+      if (lastPrinterHealthStatus !== "monitor_error") {
+        console.error(`[print-agent] Printer health check failed: ${error.message}`);
+        lastPrinterHealthStatus = "monitor_error";
+      }
+      try {
+        await syncObstacleState();
+      } catch (syncError) {
+        console.error(`[print-agent] Could not publish printer obstacle: ${syncError.message}`);
+      }
+    }
+    await delay(PRINTER_HEALTH_POLL_MS);
+  }
 }
 
 async function savePrintingProgress(job, progress) {
   const expectedPages = Math.max(1, Number(job.totalPages) || 1);
   const currentPage = Math.max(0, Number(progress.currentPage) || 0);
   const totalPages = Math.max(1, Number(progress.totalPages) || expectedPages);
-  const obstacle = ["blocked", "error", "user_intervention"].includes(progress.status) ? 1 : 0;
+  const printerObstacle = isPrinterObstacleState(progress.status);
+  const obstacle = lastPrinterObstacleState || printerObstacle ? 1 : 0;
+  lastObstacleState = obstacle;
   const updatedAt = new Date().toISOString();
   const value = {
     jobId: job.id,
@@ -339,11 +449,12 @@ async function savePrintingProgress(job, progress) {
 
 async function monitorPrintingProgress(job, printerName, existingJobIds, control) {
   const expectedPages = Math.max(1, Number(job.totalPages) || 1);
-  const discoveryDeadline = Date.now() + 15000;
+  let discoveryDeadline = Date.now() + 15000;
   const monitorDeadline = Date.now() + (30 * 60 * 1000);
   let printerJobId = null;
   let lastPagesPrinted = 0;
   let lastSavedValue = "";
+  let lastJobStatus = "";
 
   await savePrintingProgress(job, {
     currentPage: 0,
@@ -352,12 +463,41 @@ async function monitorPrintingProgress(job, printerName, existingJobIds, control
   });
 
   while (!control.cancelled && Date.now() < monitorDeadline) {
-    const printJobs = await getWindowsPrintJobs(printerName);
+    const snapshot = await getWindowsPrinterSnapshot(printerName);
+    const printJobs = snapshot.jobs;
+    const printerObstacleStatus = getPrinterObstacleStatus({
+      printerStatus: snapshot.printerStatus,
+      jobs: printerJobId === null
+        ? []
+        : printJobs.filter((item) => Number(item.JobId) === printerJobId),
+    });
+    lastPrinterObstacleState = Boolean(printerObstacleStatus);
+
+    if (printerObstacleStatus) {
+      discoveryDeadline = Date.now() + 15000;
+      const valueKey = `${lastPagesPrinted}/${expectedPages}/${printerObstacleStatus}`;
+      if (valueKey !== lastSavedValue) {
+        await savePrintingProgress(job, {
+          currentPage: lastPagesPrinted,
+          totalPages: expectedPages,
+          status: printerObstacleStatus,
+        });
+        console.warn(`[print-agent] Printer obstacle for ${job.id}: ${printerObstacleStatus}`);
+        lastSavedValue = valueKey;
+      }
+      lastJobStatus = printerObstacleStatus;
+      await delay(750);
+      continue;
+    }
+
     let printJob;
 
     if (printerJobId !== null) {
       printJob = printJobs.find((item) => Number(item.JobId) === printerJobId);
       if (!printJob) {
+        if (isPrinterObstacleState(lastJobStatus)) {
+          throw new Error(`The Windows print job ended while reporting '${lastJobStatus}'.`);
+        }
         await savePrintingProgress(job, {
           currentPage: expectedPages,
           totalPages: expectedPages,
@@ -383,6 +523,7 @@ async function monitorPrintingProgress(job, printerName, existingJobIds, control
     }
 
     const status = getSpoolerState(printJob);
+    lastJobStatus = status;
     const reportedTotal = Number(printJob.TotalPages) || expectedPages;
     const completedPages = Math.max(0, Number(printJob.PagesPrinted) || 0);
     // Windows reports completed pages, while the Canon status monitor displays
@@ -415,6 +556,7 @@ async function monitorPrintingProgress(job, printerName, existingJobIds, control
       totalPages: expectedPages,
       status: "monitor_timeout",
     });
+    throw new Error("Timed out while waiting for the Windows print job to finish.");
   }
   return { currentPage: lastPagesPrinted, totalPages: expectedPages, status: "monitor_timeout" };
 }
@@ -504,7 +646,7 @@ async function printJob(job) {
     preparedDocument = await prepareLocalDocument(job);
     await printWindow.loadFile(preparedDocument.documentPath);
     await delay(2500);
-    const existingPrintJobs = await getWindowsPrintJobs(printer.name).catch((error) => {
+    const existingPrintJobs = await getWindowsPrinterSnapshot(printer.name).then(({ jobs }) => jobs).catch((error) => {
       console.warn(`[print-agent] Could not read the initial Windows print queue: ${error.message}`);
       return [];
     });
@@ -516,10 +658,11 @@ async function printJob(job) {
       progressControl,
     ).catch((error) => {
       console.warn(`[print-agent] Print progress monitoring failed: ${error.message}`);
-      return null;
+      return { status: "monitor_error", error };
     });
     await sendToPrinter(job, printer.name, preparedDocument.isImage);
-    await progressPromise;
+    const progressResult = await progressPromise;
+    if (progressResult?.status === "monitor_error") throw progressResult.error;
 
     const rootUpdates = {};
     rootUpdates[`${JOBS_PATH}/${job.id}/printStatus`] = PRINTED;
@@ -596,11 +739,13 @@ async function startAgent() {
   }
   console.log(`[print-agent] Ready on ${os.hostname()} using ${printer.name}`);
   console.log("[print-agent] Waiting for paid Firebase jobs...");
+  void monitorPrinterHealth(printer.name);
 
   databaseApi.onValue(databaseApi.ref(database, PRINT_VENDING_PATH), (snapshot) => {
     if (!snapshot.exists()) return;
     const printVending = snapshot.val();
     const paperAvailable = Number(printVending.Paper) === 1;
+    lastObstacleState = Number(printVending.Obstacle) === 1 ? 1 : 0;
     if (paperAvailable !== lastPaperState) {
       console.log(
         paperAvailable
